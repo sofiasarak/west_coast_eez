@@ -1,0 +1,71 @@
+---
+title: "West Coast EEZs"
+author: "Sofia Sarak"
+format: pdf
+editor: visual
+---
+
+```{r}
+#| message: false
+library(stars)
+library(terra)
+library(sf)
+library(here)
+```
+
+
+## Loading in Data
+
+SST
+```{r}
+# There are 5 raster files of annual sst, each for a different year
+# Their naming convention is the same, so we can use a for loop to load them all in at once
+
+# Create a vector of the years we have rasters for (what we will iterate over)
+years <- c(2008, 2009, 2010, 2011, 2012)
+
+# Initialize empty vectors for for loop
+raster_names <- c()
+file_paths <- c()
+
+# for loop follows the following steps:
+#   - iterates over the sequence in years vector
+#   - for each year, creates a variable name including the year
+#   - for each year, creates a file path
+#   - assigns the variable name to the raster, which is read in via the created file path
+for (i in seq(years)){                                      
+  raster_names[i] <- paste0("sst_", years[i])
+  file_paths[i] <- paste0("data/average_annual_sst_", years[i], ".tif")
+  
+  assign(raster_names[i], rast(here(file_paths[i])))
+}
+```
+
+Bathymetry
+```{r}
+# Use terra package to load in raster
+depth <- rast(here("data/depth.tif"))
+```
+
+Exclusive Economic Zones
+```{r}
+# Use stars package to load in shape data frame
+# quiet = TRUE argument removes output/message
+eez <- st_read(here("data/wc_regions_clean.shp"), quiet = TRUE)
+```
+
+## Preparing Data
+
+In order to proper perform analyses using all of data sets, we first need to ensure that they all have matching CRSs.
+
+First, we are going to stack our five SST rasters into one. As they all come from the same source and only differ in year we can reasonably assume that they all have the same CRS, but stacking would also throw an error if that was not the case.
+```{r}
+# Create raster stack
+sst <- c(sst_2008, sst_2009, sst_2010, sst_2011, sst_2012)
+```
+
+We can now compare our 3 data frames to see if they all have the same CRSs.
+```{r}
+
+```
+
