@@ -11,6 +11,7 @@ library(stars)
 library(terra)
 library(sf)
 library(here)
+library(tmap)
 ```
 
 
@@ -41,6 +42,8 @@ for (i in seq(years)){
 }
 ```
 
+providing elevation data, in meters
+
 Bathymetry
 ```{r}
 # Use terra package to load in raster
@@ -65,6 +68,147 @@ sst <- c(sst_2008, sst_2009, sst_2010, sst_2011, sst_2012)
 ```
 
 We can now compare our 3 data frames to see if they all have the same CRSs.
+```{r}
+# sst and depth rasters
+if (crs(sst)==crs(depth)){
+  print("CRSs of sst and depth match!")
+}else{
+  print("CRSs of sst and depth do not match, transforming to CRS of sst")
+  depth <- project(depth, crs(sst))
+}
+
+# sst raster and eez object
+if (crs(sst)==crs(eez)){
+  print("CRSs of sst and eez match!")
+}else{
+  print("CRSs of sst and eez do not match, transforming to CRS of sst")
+  eez <- st_transform(eez, crs(sst))
+}
+
+# We transfromed depth and eez to match the CRS of sst -- did it work?
+if (crs(depth)==crs(eez)){
+  print("CRSs of sst and eez match (transformations worked!)")
+}else{
+  print("Something went wrong...")
+}
+```
+
+## Processing Data
+
+We want to combine our sst and depth data, but in order to do so, we have to ensure they have the same extent, resolution, and position.
+
+There is no method to extract position, but by matching up extent and resolution we often fix position as well (CONFIRM).
+
+```{r}
+# Is the extent the same?
+ext(sst) == ext(depth_cropped)
+
+# Is the resolution the same?
+res(sst) == res(depth_cropped)
+```
+
+Find mean SST over the years 2008-2012.
+```{r}
+# mean() operation on raster of multiple layers creates object with one raster layer
+mean_sst <- mean(sst)
+```
+
+From the metadat (CONFIRM), we know that SST is stored in Kelvin instead of Celsius. In order to make our results more comprehensible, we will convert our data to Celsius.
+```{r}
+# Subtract 273.15 (conversion from K to C) from all pixels
+mean_sst_c <- mean_sst - 273.15
+```
+
+In order to ensure that `depth` and `sst` have the same extent, we will crop `depth` to match `sst`.
+```{r}
+# Crop depth raster to limits of sst raster
+depth_cropped <- crop(depth, y = mean_sst)
+```
+
+To fix the issue of mismatched resolutions, we will resample the depth data to match the resolution of `sst`. 
+
+Resampling is the method by which we can compute values for new pixel locations in `depth` based on custom resolutions and origins. We will use the "nearest neighbor approach", DEFINE.
+```{r}
+# Resample depth data to match specifications of sst data, specifying nearest neighbor method
+depth_cropped_resample <- resample(depth_cropped, y = mean_sst, method = "near")
+```
+
+A way to know if we have succeeded in matching the extent, resolution, and position of our two rasters is by seeing if they will stack or not. If they do not completely match, an error will be thrown and stacking will fail.
+
+```{r}
+depth_sst <- c(depth_cropped_resample, mean_sst)
+```
+
+We successfully stacked our two rasters!
+
+## Finding areas with suitable growing conditions: oysters.
+
+Research has shown that oysters need the following conditions for optimal growth:
+
+sea surface temperature: 11-30°C
+depth: 0-70 meters below sea level
+
+These specifications come from the EDS223 assignment description, we can also be retrieved from resources such as [SeaLifeBase](https://www.sealifebase.ca/search.php).
+
+
+In order to find the areas with suitable growing conditions for oysters, we will assign a value of 1 to each pixel that is within the suitable range and 0 otherwise, for both of our separate raster layers.
+```{r}
+# Change layer names to be more indicative ("mean" --> "sst_mean")
+names(depth_sst) <- c("depth", "sst_mean")
+
+# Create copy of data frame to serve as mask
+depth_sst_mask <- depth_sst
+
+# Set values to 0 and 1 following specifications, in depth layer
+depth_sst_mask[depth_sst_mask[["depth"]] > 70 ] <- 0
+depth_sst_mask[depth_sst_mask[["depth"]] != 0] <- 1
+
+# Set values to 0 and 1 following specifications, in sst_mean layer
+depth_sst_mask[depth_sst_mask[["sst_mean"]] >= 11 & depth_sst_mask[["sst_mean"]] <=30] <- 1
+depth_sst_mask[depth_sst_mask[["sst_mean"]] != 1] <- 0
+```
+
+To create one layer that contains suitability based on *both* variables, we will multiple the two layers, obtaining the following results:
+
+- if a cell = 1, it is suitable based on both conditions
+- if a cell = 0, it is not suitable (either based on one of or both conditions)
+
+This can be true because anything multiplied by 0 (not suitable in this case), will equal 0.
+
+```{r}
+oyster_suitability <- depth_sst_mask[["depth"]] * depth_sst_mask[["sst_mean"]]
+
+names(oyster_suitability) <- c("suitable")
+```
+
+```{r}
+tm_shape(oyster_suitability) +
+  tm_raster()
+tm_shape(depth_sst_mask[["depth"]]) +
+  tm_raster()
+tm_shape(depth_sst_mask[["sst_mean"]]) +
+  tm_raster() +
+  tm_shape(eez) +
+  tm_polygons()
+```
+
+
+## Determining the most suitable EEZ
+
+We want to determine the total suitable area within each EEZ in order to rank zones by priority. To do so, we need to find the total area of suitable locations within each EEZ.
+
+Select suitable cells within West Coast EEZs
+```{r}
+
+```
+
+find area of grid cells
+```{r}
+
+```
+
+find the total suitable area within each EEZ
+hint: it might be helpful to rasterize the EEZ data
 ```{r}
 
 ```
