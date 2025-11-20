@@ -12,12 +12,13 @@ library(terra)
 library(sf)
 library(here)
 library(tmap)
+library(tidyverse)
 ```
-
 
 ## Loading in Data
 
 SST
+
 ```{r}
 # There are 5 raster files of annual sst, each for a different year
 # Their naming convention is the same, so we can use a for loop to load them all in at once
@@ -40,17 +41,21 @@ for (i in seq(years)){
   
   assign(raster_names[i], rast(here(file_paths[i])))
 }
+
+rm(raster_names, file_paths, i, years)
 ```
 
 providing elevation data, in meters
 
 Bathymetry
+
 ```{r}
 # Use terra package to load in raster
 depth <- rast(here("data/depth.tif"))
 ```
 
 Exclusive Economic Zones
+
 ```{r}
 # Use stars package to load in shape data frame
 # quiet = TRUE argument removes output/message
@@ -62,12 +67,14 @@ eez <- st_read(here("data/wc_regions_clean.shp"), quiet = TRUE)
 In order to proper perform analyses using all of data sets, we first need to ensure that they all have matching CRSs.
 
 First, we are going to stack our five SST rasters into one. As they all come from the same source and only differ in year we can reasonably assume that they all have the same CRS, but stacking would also throw an error if that was not the case.
+
 ```{r}
 # Create raster stack
 sst <- c(sst_2008, sst_2009, sst_2010, sst_2011, sst_2012)
 ```
 
 We can now compare our 3 data frames to see if they all have the same CRSs.
+
 ```{r}
 # sst and depth rasters
 if (crs(sst)==crs(depth)){
@@ -101,42 +108,46 @@ There is no method to extract position, but by matching up extent and resolution
 
 ```{r}
 # Is the extent the same?
-ext(sst) == ext(depth_cropped)
+ext(sst) == ext(depth)
 
 # Is the resolution the same?
-res(sst) == res(depth_cropped)
+res(sst) == res(depth)
 ```
 
 Find mean SST over the years 2008-2012.
+
 ```{r}
 # mean() operation on raster of multiple layers creates object with one raster layer
 mean_sst <- mean(sst)
 ```
 
-From the metadat (CONFIRM), we know that SST is stored in Kelvin instead of Celsius. In order to make our results more comprehensible, we will convert our data to Celsius.
+From the metadata (CONFIRM), we know that SST is stored in Kelvin instead of Celsius. In order to make our results more comprehensible, we will convert our data to Celsius.
+
 ```{r}
 # Subtract 273.15 (conversion from K to C) from all pixels
 mean_sst_c <- mean_sst - 273.15
 ```
 
 In order to ensure that `depth` and `sst` have the same extent, we will crop `depth` to match `sst`.
+
 ```{r}
 # Crop depth raster to limits of sst raster
-depth_cropped <- crop(depth, y = mean_sst)
+depth_cropped <- crop(depth, y = mean_sst_c)
 ```
 
-To fix the issue of mismatched resolutions, we will resample the depth data to match the resolution of `sst`. 
+To fix the issue of mismatched resolutions, we will resample the depth data to match the resolution of `sst`.
 
-Resampling is the method by which we can compute values for new pixel locations in `depth` based on custom resolutions and origins. We will use the "nearest neighbor approach", DEFINE.
+Resampling is the method by which we can compute values for new pixel locations in `depth` based on custom resolutions and origins. We will use the "nearest neighbor approach", a technique in which the value of each cell in the output raster (in this case, `depth_cropped`) is calculated using the value of the nearest cell in the input raster (`mean_sst`) ([ESRI GIS Dictionary](https://support.esri.com/en-us/gis-dictionary/nearest-neighbor-resampling)). This fills in the new cells that will be created in order for `depth` to match the resolution of `sst`.
+
 ```{r}
 # Resample depth data to match specifications of sst data, specifying nearest neighbor method
-depth_cropped_resample <- resample(depth_cropped, y = mean_sst, method = "near")
+depth_cropped_resampled <- resample(depth_cropped, y = mean_sst_c, method = "near")
 ```
 
 A way to know if we have succeeded in matching the extent, resolution, and position of our two rasters is by seeing if they will stack or not. If they do not completely match, an error will be thrown and stacking will fail.
 
 ```{r}
-depth_sst <- c(depth_cropped_resample, mean_sst)
+depth_sst <- c(depth_cropped_resampled, mean_sst_c)
 ```
 
 We successfully stacked our two rasters!
@@ -145,71 +156,203 @@ We successfully stacked our two rasters!
 
 Research has shown that oysters need the following conditions for optimal growth:
 
-sea surface temperature: 11-30°C
-depth: 0-70 meters below sea level
+sea surface temperature: 11-30°C depth: 0-70 meters below sea level (or -70 in our data)
 
-These specifications come from the EDS223 assignment description, we can also be retrieved from resources such as [SeaLifeBase](https://www.sealifebase.ca/search.php).
-
+These specifications come from the EDS223 assignment description, but can also be retrieved from resources such as [SeaLifeBase](https://www.sealifebase.ca/search.php).
 
 In order to find the areas with suitable growing conditions for oysters, we will assign a value of 1 to each pixel that is within the suitable range and 0 otherwise, for both of our separate raster layers.
+
 ```{r}
 # Change layer names to be more indicative ("mean" --> "sst_mean")
-names(depth_sst) <- c("depth", "sst_mean")
+names(depth_sst) <- c("depth", "sst_mean_c")
 
 # Create copy of data frame to serve as mask
 depth_sst_mask <- depth_sst
-
-# Set values to 0 and 1 following specifications, in depth layer
-depth_sst_mask[depth_sst_mask[["depth"]] > 70 ] <- 0
-depth_sst_mask[depth_sst_mask[["depth"]] != 0] <- 1
-
-# Set values to 0 and 1 following specifications, in sst_mean layer
-depth_sst_mask[depth_sst_mask[["sst_mean"]] >= 11 & depth_sst_mask[["sst_mean"]] <=30] <- 1
-depth_sst_mask[depth_sst_mask[["sst_mean"]] != 1] <- 0
 ```
+
+```{r}
+sst_suitability <- matrix(c(-Inf, 11, 0,
+                          11, 30, 1, 
+                          30, Inf, 0),
+                          nrow = 3, byrow = TRUE)
+
+depth_sst_mask[["sst_mean_c"]] <- classify(depth_sst_mask[["sst_mean_c"]], rcl = sst_suitability)
+```
+
+```{r}
+depth_suitability <- matrix(c(-Inf, -70, 0,
+                              -70, 0, 1,
+                              0, Inf, 0),
+                            nrow = 3, byrow = TRUE)
+
+depth_sst_mask[["depth"]] <- classify(depth_sst_mask[["depth"]], rcl = depth_suitability)
+```
+
+```{r}
+
+```
+
+\*\* when writing generalizable function, arguments would be: min_sst, max_sst, min_depth, max_depth and replace the values in the matrix with the parameters in the function
 
 To create one layer that contains suitability based on *both* variables, we will multiple the two layers, obtaining the following results:
 
-- if a cell = 1, it is suitable based on both conditions
-- if a cell = 0, it is not suitable (either based on one of or both conditions)
+-   if a cell = 1, it is suitable based on both conditions
+-   if a cell = 0, it is not suitable (either based on one of or both conditions)
 
 This can be true because anything multiplied by 0 (not suitable in this case), will equal 0.
 
+-   can do via boolean:
+-   if depth == 0 and sst == 0, then multiply
+-   if depth == 0 and sst = 1, then multiple if depth
+
 ```{r}
-oyster_suitability <- depth_sst_mask[["depth"]] * depth_sst_mask[["sst_mean"]]
+oyster_suitability <- depth_sst_mask[["depth"]] * depth_sst_mask[["sst_mean_c"]]
 
 names(oyster_suitability) <- c("suitable")
 ```
 
 ```{r}
-tm_shape(oyster_suitability) +
+tm_shape(depth_sst[["depth"]]) +
   tm_raster()
-tm_shape(depth_sst_mask[["depth"]]) +
+tm_shape(depth_classified) +
   tm_raster()
-tm_shape(depth_sst_mask[["sst_mean"]]) +
-  tm_raster() +
-  tm_shape(eez) +
-  tm_polygons()
 ```
 
+```{r}
+tm_shape(mean_sst_c) +
+  tm_raster() 
+
+tm_shape(sst_classified) +
+  tm_raster() 
+```
+
+```{r}
+tm_shape(oyster_suitability) +
+  tm_raster()
+
+tm_shape(suitable_eez) + 
+  tm_raster()
+```
 
 ## Determining the most suitable EEZ
 
 We want to determine the total suitable area within each EEZ in order to rank zones by priority. To do so, we need to find the total area of suitable locations within each EEZ.
 
 Select suitable cells within West Coast EEZs
-```{r}
 
+```{r}
+suitable_westcoast <- mask(oyster_suitability, eez)
 ```
+
+```{r}
+eez_rast <- rasterize(eez, suitable_eez,
+                      field = "rgn")
+```
+
+```{r}
+suitable_per_region <- zonal(suitable_westcoast, eez_rast, fun = "sum", na.rm = TRUE)
+```
+
+```{r}
+#| echo: false
+suitable_per_region %>% 
+  knitr::kable(col.names = c("EEZ Region", "# of Suitable Cells"))
+```
+
+
+```{r}
+# Area of each cell in km squared
+cell_area <- cellSize(suitable_westcoast, unit="km")[1]
+
+# Multiplying cell area by number of cells in each region (to obtain suitable area in km^2, per region)
+suitable_per_region <- suitable_per_region %>% 
+  mutate(cell_area = cell_area,
+         area_suitable = suitable * cell_area) %>% 
+  relocate(cell_area, .after = suitable) 
+```
+
+
+In order to produce a map of West Coast EEZs colored by amount of suitable species area in each region, we need to join our EEZ geometries to our `suitable_per_region` data frame.
+
+```{r}
+eez_suitability_geom <- left_join(eez, suitable_per_region, by = "rgn")
+```
+
+The `eez_suitability_geom` now contains the 5 West Coast region polygons with their corresponding suitable areas for oysters.
+
+Map 
+```{r}
+tm_shape(depth) + 
+  tm_raster(
+          alpha = 0.5,
+          col.scale = tm_scale_intervals(midpoint = NA,
+                                         breaks = c(-Inf, 0, Inf),
+          values = c("blue","blue" ,"forestgreen")),
+          col.legend = tm_legend(show = FALSE)) +
+tm_shape(eez_suitability_geom) +
+  tm_polygons(fill = "area_suitable",
+              fill.legend = tm_legend(title = "Suitable Area (km^2)")) + 
+  tm_text(text = "rgn") +
+tm_grid(alpha = 0.5)
+```
+
+
+To do:
+- fix style of zone labels
+- fix background coloring and legend
+- add title! which includes species title (paste()?)
+
+
+
+
+
+
+```{r}
+california_coast <- st_read(here("data", "coast", "coast.gdb"))
+
+tm_shape(california_coast) + 
+  tm_polygons()
+```
+
+
+
+
+
+
+
+
+
 
 find area of grid cells
+
 ```{r}
 
 ```
 
-find the total suitable area within each EEZ
-hint: it might be helpful to rasterize the EEZ data
+find the total suitable area within each EEZ hint: it might be helpful to rasterize the EEZ data
+
 ```{r}
 
 ```
 
+want to stay within the EEZs - mask for only what is within the EEZs - mask(reclassified_suitability, eez) (ENTIRE EEZ, not by eez)
+
+eventually: - value: 0, 1 - eez: says which eez - x: - y:
+
+take a look at cell size --\> area covered, or area that is suitable within eez use function cellsize()! how many cells = 1 \* cell size (0.3) = total area that is suitable
+
+zones = region (attribute inside eez shape file) summary stat = count()
+
+once you get the count per zone, THEN can multipy by cell size
+
+ˆ\
+
+```{r}
+# Set values to 0 and 1 following specifications, in depth layer
+depth_sst_mask[depth_sst_mask[["depth"]] > - 70 & depth_sst_mask[["depth"]] < 0] <- 0
+depth_sst_mask[depth_sst_mask[["depth"]] != 0] <- 1
+
+# Set values to 0 and 1 following specifications, in sst_mean layer
+depth_sst_mask[depth_sst_mask[["sst_mean_c"]] >= 11 & depth_sst_mask[["sst_mean_c"]] <=30] <- 1
+depth_sst_mask[depth_sst_mask[["sst_mean_c"]] != 1] <- 0
+```
