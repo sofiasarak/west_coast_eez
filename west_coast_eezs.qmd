@@ -152,6 +152,7 @@ depth_sst <- c(depth_cropped_resampled, mean_sst_c)
 
 We successfully stacked our two rasters!
 
+
 ## Finding areas with suitable growing conditions: oysters.
 
 Research has shown that oysters need the following conditions for optimal growth:
@@ -211,148 +212,192 @@ oyster_suitability <- depth_sst_mask[["depth"]] * depth_sst_mask[["sst_mean_c"]]
 names(oyster_suitability) <- c("suitable")
 ```
 
-```{r}
-tm_shape(depth_sst[["depth"]]) +
-  tm_raster()
-tm_shape(depth_classified) +
-  tm_raster()
-```
-
-```{r}
-tm_shape(mean_sst_c) +
-  tm_raster() 
-
-tm_shape(sst_classified) +
-  tm_raster() 
-```
-
-```{r}
-tm_shape(oyster_suitability) +
-  tm_raster()
-
-tm_shape(suitable_eez) + 
-  tm_raster()
-```
 
 ## Determining the most suitable EEZ
 
-We want to determine the total suitable area within each EEZ in order to rank zones by priority. To do so, we need to find the total area of suitable locations within each EEZ.
+We want to determine the total suitable area within each EEZ in order to rank zones by priority. 
 
-Select suitable cells within West Coast EEZs
+This requires three distinct steps:
+  1. Find the number of cells within each zone that are deemed suitable (based on previous analysis).
+  2. Find the physical area that each cell represents (in km^2).
+  3. Multiply number of cells by area that cells represent to get actual suitable area, by zone.
 
 ```{r}
+# Create a raster of species suitability only within the EEZ boundaries
 suitable_westcoast <- mask(oyster_suitability, eez)
+
+# Rasterize EEZ (will allow for zonal operations)
+eez_rast <- rasterize(eez, suitable_westcoast,
+                      field = "rgn")      # Set region as the value we want populating the eez raster
 ```
 
-```{r}
-eez_rast <- rasterize(eez, suitable_eez,
-                      field = "rgn")
-```
+We can find the number of suitable *cells* in each EEZ region by using the `terra::zonal` function. It summarizes values of one SpatRaster based on the zones provided by another. In our case, we will be summing the values of our suitable cells grouped by eez.
+
+Summation works to provide the number of suitable cells in this case because we had populated suitable with "1"s and unsuitable with "0"s.
 
 ```{r}
+# Find the number of suitable cells per EEZ region
 suitable_per_region <- zonal(suitable_westcoast, eez_rast, fun = "sum", na.rm = TRUE)
 ```
 
 ```{r}
 #| echo: false
+# Create clean table to view sums
 suitable_per_region %>% 
   knitr::kable(col.names = c("EEZ Region", "# of Suitable Cells"))
 ```
 
-
+Find area of each cell in square km.
 ```{r}
-# Area of each cell in km squared
+# cellSize() returns a SpatRaster object of information, we want to extract just area
 cell_area <- cellSize(suitable_westcoast, unit="km")[1]
+```
 
-# Multiplying cell area by number of cells in each region (to obtain suitable area in km^2, per region)
+Multiply cell area by number of cells.
+```{r}
+# Multiplying by each region by adding and specifying columns to data frame
 suitable_per_region <- suitable_per_region %>% 
   mutate(cell_area = cell_area,
          area_suitable = suitable * cell_area) %>% 
   relocate(cell_area, .after = suitable) 
 ```
 
-
 In order to produce a map of West Coast EEZs colored by amount of suitable species area in each region, we need to join our EEZ geometries to our `suitable_per_region` data frame.
 
 ```{r}
+# Join eez data frame (with goemetries) to data frame with suitable area by region
 eez_suitability_geom <- left_join(eez, suitable_per_region, by = "rgn")
 ```
 
 The `eez_suitability_geom` now contains the 5 West Coast region polygons with their corresponding suitable areas for oysters.
 
-Map 
-```{r}
-tm_shape(depth) + 
-  tm_raster(
-          alpha = 0.5,
-          col.scale = tm_scale_intervals(midpoint = NA,
-                                         breaks = c(-Inf, 0, Inf),
-          values = c("blue","blue" ,"forestgreen")),
-          col.legend = tm_legend(show = FALSE)) +
-tm_shape(eez_suitability_geom) +
-  tm_polygons(fill = "area_suitable",
-              fill.legend = tm_legend(title = "Suitable Area (km^2)")) + 
-  tm_text(text = "rgn") +
-tm_grid(alpha = 0.5)
-```
-
-
-To do:
-- fix style of zone labels
-- fix background coloring and legend
-- add title! which includes species title (paste()?)
-
-
-
-
-
+The final step of our oyster analysis is to create a map of EEZ regions colored by amount of suitable area. For this, we use our original depth raster to provide a background image (and general outlines of the California coast), overlayed with the 5 West Coast EEZs, colored by amount of suitable area.
 
 ```{r}
-california_coast <- st_read(here("data", "coast", "coast.gdb"))
+#| messages: false
+#| warnings: false
 
-tm_shape(california_coast) + 
-  tm_polygons()
+# Turn off autoscale -- messes with font size
+tmap_options(component.autoscale = FALSE) 
+
+# Create map using tmap
+tm_shape(depth) +                                      # Plot depth raster as first layer
+  tm_raster(col.scale  = tm_scale(values = c("#1d3891", "#84d18d")),    
+            col.legend = tm_legend(show = FALSE)) +    # Hide depth legend because not of interest
+tm_shape(eez_suitability_geom) +                       # Plot EEZ polygons
+  tm_polygons(fill = "area_suitable",                  # Fill by suitable area
+              fill.scale = tm_scale(values = "brewer.yl_or_rd"),
+              fill.legend = tm_legend(title = "Suitable Area (km^2)"),
+              fill_alpha = 0.8,
+              lwd = 1.5) + 
+  tm_text(text = "rgn",                                # Add EEZ zone labels
+          size = 0.6,
+          xmod = -2.35,
+          bgcol = "white",
+          bgcol_alpha = 0.5,
+          fontface = "bold")+
+tm_grid(alpha = 0.5) +
+tm_title("Suitability of West Coast EEZs for Oyster Aquaculture",
+         size = 1)
 ```
 
+## Finding Most Suitable EEZs for Any Species
 
+In the code above, we developed a method of extracting the most suitable regions for marine aquaculture based on just a few parameters: temperature range and depth range. By making our workflow generalizable, we can create a function that takes a handle of arguments and produces a map of suitable West Coast EEZs for any marine species.
 
+### Generalizing Workflow
 
+Our function will follow a few assumptions:
+- depth entered as a positive value (ex; 70 feet deep/below sea level is to be entered as 70, not -70.) 
+- max_depth is the deepest
 
-
-
-
-
-
-find area of grid cells
 
 ```{r}
 
+west_coast_suitability_map <- function(species, min_sst, max_sst, min_depth, max_depth){
+
+# Creating depth and sst mask based on min and max values
+depth_sst_mask <- depth_sst
+
+# sst matrix and classification
+sst_suitability <- matrix(c(-Inf, min_sst, 0,
+                          min_sst, max_sst, 1, 
+                          max_sst, Inf, 0),
+                          nrow = 3, byrow = TRUE)
+
+depth_sst_mask[["sst_mean_c"]] <- classify(depth_sst_mask[["sst_mean_c"]], rcl = sst_suitability)
+
+# depth matrix and classification
+depth_suitability <- matrix(c(-Inf, -max_depth, 0,
+                              -max_depth, min_depth, 1,
+                               min_depth, Inf, 0),
+                               nrow = 3, byrow = TRUE)
+
+depth_sst_mask[["depth"]] <- classify(depth_sst_mask[["depth"]], rcl = depth_suitability)
+
+# Creating suitability raster
+suitability_raster <- depth_sst_mask[["depth"]] * depth_sst_mask[["sst_mean_c"]]
+
+# Renaming raster layer value to be more accurate
+names(suitability_raster) <- c("suitable")
+
+# Create a raster of species suitability only within the EEZ boundaries
+suitable_westcoast <- mask(suitability_raster, eez)
+
+# Rasterize EEZ (will allow for zonal operations)
+eez_rast <- rasterize(eez, suitable_westcoast,
+                      field = "rgn")      # Set region as the value we want populating the eez raster
+
+# Find the number of suitable cells per EEZ region
+suitable_per_region <- zonal(suitable_westcoast, eez_rast, fun = "sum", na.rm = TRUE)
+
+# cellSize() returns a SpatRaster object of information, we want to extract just area
+cell_area <- cellSize(suitable_westcoast, unit="km")[1]
+
+# Multiplying by each region by adding and specifying columns to data frame
+suitable_per_region <- suitable_per_region %>% 
+  mutate(cell_area = cell_area,
+         area_suitable = suitable * cell_area) %>% 
+  relocate(cell_area, .after = suitable) 
+
+# Join eez data frame (with goemetries) to data frame with suitable area by region
+eez_suitability_geom <- left_join(eez, suitable_per_region, by = "rgn")
+
+# Turn off autoscale -- messes with font size
+tmap_options(component.autoscale = FALSE) 
+
+# Create map using tmap
+tm_shape(depth) +                                      # Plot depth raster as first layer
+  tm_raster(col.scale  = tm_scale(values = c("#1d3891", "#84d18d")),    
+            col.legend = tm_legend(show = FALSE)) +    # Hide depth legend because not of interest
+tm_shape(eez_suitability_geom) +                       # Plot EEZ polygons
+  tm_polygons(fill = "area_suitable",                  # Fill by suitable area
+              fill.scale = tm_scale(values = "brewer.yl_or_rd"),
+              fill.legend = tm_legend(title = "Suitable Area (km^2)"),
+              fill_alpha = 0.8,
+              lwd = 1.5) + 
+  tm_text(text = "rgn",                                # Add EEZ zone labels
+          size = 0.6,
+          xmod = -2.35,
+          bgcol = "white",
+          bgcol_alpha = 0.5,
+          fontface = "bold")+
+tm_grid(alpha = 0.5) +
+tm_title(paste("Suitability of West Coast EEZs for", species, "Aquaculture"),
+         size = 1)
+}
 ```
 
-find the total suitable area within each EEZ hint: it might be helpful to rasterize the EEZ data
+
+## Running Function on Species of Choice: Bull Kelp
+
+Talk a little about Bull kelp
 
 ```{r}
-
+west_coast_suitability_map(species = "Bull Kelp" ,
+                           min_sst = 10,
+                           max_sst = 16,
+                           min_depth = 40,
+                           max_depth = 17)
 ```
 
-want to stay within the EEZs - mask for only what is within the EEZs - mask(reclassified_suitability, eez) (ENTIRE EEZ, not by eez)
-
-eventually: - value: 0, 1 - eez: says which eez - x: - y:
-
-take a look at cell size --\> area covered, or area that is suitable within eez use function cellsize()! how many cells = 1 \* cell size (0.3) = total area that is suitable
-
-zones = region (attribute inside eez shape file) summary stat = count()
-
-once you get the count per zone, THEN can multipy by cell size
-
-ˆ\
-
-```{r}
-# Set values to 0 and 1 following specifications, in depth layer
-depth_sst_mask[depth_sst_mask[["depth"]] > - 70 & depth_sst_mask[["depth"]] < 0] <- 0
-depth_sst_mask[depth_sst_mask[["depth"]] != 0] <- 1
-
-# Set values to 0 and 1 following specifications, in sst_mean layer
-depth_sst_mask[depth_sst_mask[["sst_mean_c"]] >= 11 & depth_sst_mask[["sst_mean_c"]] <=30] <- 1
-depth_sst_mask[depth_sst_mask[["sst_mean_c"]] != 1] <- 0
-```
