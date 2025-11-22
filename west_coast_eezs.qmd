@@ -6,12 +6,18 @@ format: pdf
 editor: visual
 ---
 
-# Where Can I Farm this Species? 
+# Where Can I Farm this Species?
+
 ### EDS223, Homework Assignment 4
 
 In the growing world of aquaculture, knowing where a species will thrive is vital. The subsequent analysis aims to determine which areas of the west coast of the United States are the best suited for a variety of aquaculture species. This is done through the utilization of spatial raster and vector data as well as species-specific requirements.
 
+**Github README**
+
+![](images/readme_1.png) ![](images/readme_2.png) ![](images/readme_3.png)
+
 ## Setup
+
 ```{r}
 #| message: false
 library(stars)
@@ -182,13 +188,11 @@ We successfully stacked our two rasters!
 
 Image Source: [Pangea Shellfish Company](https://www.pangeashellfish.com/blog/the-different-methods-of-growing-oysters)
 
-
-
 Research has shown that oysters need the following conditions for optimal growth:
 
-- sea surface temperature: 11-30°C
+-   sea surface temperature: 11-30°C
 
-- depth: 0-70 meters below sea level (or -70 in our data)
+-   depth: 0-70 meters below sea level (or -70 in our data)
 
 These specifications come from the [EDS223 assignment description](https://eds-223-geospatial.github.io/assignments/HW4.html#fn3), but can also be retrieved from resources such as [SeaLifeBase](https://www.sealifebase.ca/search.php).
 
@@ -243,11 +247,11 @@ We want to determine the total suitable area within each EEZ in order to rank zo
 
 This requires three distinct steps:
 
-1. Find the number of cells within each zone that are deemed suitable (based on previous analysis). 
+1.  Find the number of cells within each zone that are deemed suitable (based on previous analysis).
 
-2. Find the physical area that each cell represents (in km\^2). 
+2.  Find the physical area that each cell represents (in km\^2).
 
-3. Multiply number of cells by area that cells represent to get actual suitable area, by zone.
+3.  Multiply number of cells by area that cells represent to get actual suitable area, by zone.
 
 ```{r}
 # Create a raster of species suitability only within the EEZ boundaries
@@ -431,17 +435,15 @@ tm_title(paste("Suitability of West Coast EEZs for", species, "Aquaculture"),
 
 Image Source: [aquaculturenorthamerica.com](https://www.aquaculturenorthamerica.com/alaskas-vast-mariculture-potential/)
 
-
-
 Bull kelp farming is a niche sector of seaweed aquaculture, especially small compared to the large seaweed operations taking place in Asia. Currently, there are only a few active, albeit experimental, bull kelp farms in Alaska and BC.
 
 This lack of development is partially due to the fact that bull kelp is not necessarily a commercial commodity in the same way other species of seaweed, such as sugar kelp (Sacharrina latissima) or ribbon kelp (Alaria marginata), are. Despite its challenges, bull kelp is essential for ocean health and biodiversity, so farming more of it could help with restoration efforts, as well as help fill knowledge gaps in its cultivation.
 
-Bull kelp's suitability conditions are as follows: 
+Bull kelp's suitability conditions are as follows:
 
-- depth: 17 to 40 meters 
+-   depth: 17 to 40 meters
 
-- sst: 10 to 16 degrees Celsius
+-   sst: 10 to 16 degrees Celsius
 
 ```{r}
 #| message: false
