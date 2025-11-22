@@ -85,6 +85,9 @@ First, we are going to stack our five SST rasters into one. As they all come fro
 ```{r}
 # Create raster stack
 sst <- c(sst_2008, sst_2009, sst_2010, sst_2011, sst_2012)
+
+# Remove single year raster
+rm(sst_2008, sst_2009, sst_2010, sst_2011, sst_2012)
 ```
 
 We can now compare our 3 data frames to see if they all have the same CRSs.
@@ -106,11 +109,11 @@ if (crs(sst)==crs(eez)){
   eez <- st_transform(eez, crs(sst))
 }
 
-# We transfromed depth and eez to match the CRS of sst -- did it work?
+# We transformed depth and eez to match the CRS of sst -- did it work?
 if (crs(depth)==crs(eez)){
-  print("CRSs of sst and eez match (transformations worked!)")
+  print("CRSs of sst, depth, and eez match (transformations worked!)")
 }else{
-  print("Something went wrong...")
+  stop("Something went wrong...")
 }
 ```
 
@@ -147,6 +150,13 @@ To ensure that `depth` and `sst` have the same extent, we crop `depth` to match 
 ```{r}
 # Crop depth raster to limits of sst raster
 depth_cropped <- crop(depth, y = mean_sst_c)
+
+# Confirm that depth raster was successfully cropped
+if (nrow(depth_cropped) < nrow(depth)){
+  print("Cropping appears successful")
+}else{
+  warning("The depth_cropped raster was not cropped properly")
+}
 ```
 
 To fix the issue of mismatched resolutions, we will resample the depth data to match the resolution of `sst`.
@@ -246,6 +256,13 @@ suitable_westcoast <- mask(oyster_suitability, eez)
 # Rasterize EEZ (will allow for zonal operations)
 eez_rast <- rasterize(eez, suitable_westcoast,
                       field = "rgn")      # Set region as the value we want populating the eez raster
+
+# Confirm eez was properly rasterized
+if (names(eez_rast) == "rgn"){
+  print("Rasterizing the eez raster was successful")
+}else{
+  warning("EEZ vector did not rasterize properly")
+}
 ```
 
 We can find the number of suitable *cells* in each EEZ region by using the `terra::zonal` function. It summarizes values of one SpatRaster based on the zones provided by another. In our case, we will be summing the values of our suitable cells grouped by eez.
@@ -274,7 +291,7 @@ cell_area <- cellSize(suitable_westcoast, unit="km")[1]
 Multiply cell area by number of cells.
 
 ```{r}
-# Multiplying by each region by adding and specifying columns to data frame
+# Multiply by each region by adding and specifying columns to data frame
 suitable_per_region <- suitable_per_region %>% 
   mutate(cell_area = cell_area,
          area_suitable = suitable * cell_area) %>% 
@@ -284,7 +301,7 @@ suitable_per_region <- suitable_per_region %>%
 In order to produce a map of West Coast EEZs colored by amount of suitable species area in each region, we need to join our EEZ geometries to our `suitable_per_region` data frame.
 
 ```{r}
-# Join eez data frame (with goemetries) to data frame with suitable area by region
+# Join eez data frame (with geometries) to data frame with suitable area by region
 eez_suitability_geom <- left_join(eez, suitable_per_region, by = "rgn")
 ```
 
